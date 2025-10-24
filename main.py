@@ -1,186 +1,207 @@
+from random import choice
 from pygame import *
-# Пояснення: Імпортуємо ВСІ класи та функції з основного модуля pygame (*).
 from settings import *
-# Пояснення: Імпортуємо всі константи (наприклад, WINDOW_WIDTH, WHITE, KEYS) з файлу налаштувань.
+
 from sounds import load_sounds
-# Пояснення: Функція для завантаження всіх звукових файлів.
 from keys import draw_keys, create_key_rects
-# Пояснення: Функції для малювання піаніно та створення його прямокутних областей.
 from buttons import Button
-# Пояснення: Клас для створення інтерактивних кнопок.
+from ui.settings_menu import SettingsMenu
+from ui.toggle_switch import ToggleSwitch
+from soundgen import generate_random_bank
 
-# =================== ЗМІНА 1: +МЕНЮ НАЛАШТУВАНЬ ===================
-from ui.settings_menu import SettingsMenu  # Тепер кнопка "Settings" працює!
-# Пояснення: Імпортуємо клас, який реалізує інтерфейс меню налаштувань (слайдери, кнопки).
-
-# =================== ЗМІНА 2: ШВИДШИЙ СТАРТ ===================
-mixer.init()  # Тільки звук (швидше, ніж init())
-# Пояснення: Ініціалізуємо лише звуковий модуль (mixer), що прискорює запуск програми.
+init()
 display.set_caption("Piano Game")
-# Пояснення: Встановлюємо заголовок вікна.
-font.init()   # Тільки шрифти (незалежно від звуку)
-# Пояснення: Ініціалізуємо лише модуль шрифтів.
 
-# =================== ЗМІНА 3: ЗВУК ДО ЕКРАНУ ===================
-sounds = load_sounds(KEYS)  # Завантажуємо ПЕРЕД екраном (без затримок)
-# Пояснення: Завантажуємо звуки всіх нот, визначених у константі KEYS. Це робиться до створення екрана.
+
+sounds = load_sounds(KEYS)
+all_sounds_list = list(sounds.values()) # №3 для рандомного режиму
+GEN_DIR = "assets/data/sounds"     # куди пишемо синтетичні wav
+generated_sounds = {}              # key -> Sound (коли тумблер ON)
+
+
+key_rects = create_key_rects(len(KEYS))
+keys_list = list(KEYS.keys())
 my_font = font.SysFont("Arial", 24)
-# Пояснення: Створюємо системний об'єкт шрифту для використання в тексті (наприклад, на кнопках).
 pressed_keys = set()
-# Пояснення: Множина, що зберігає індекси (0, 1, 2, ...) **активних** клавіш піаніно, які натиснуті в даний момент.
 
-# =================== ЗМІНА 4: 2 РЕЖИМИ ЕКРАНУ ===================
-screen_mode = "main"          # "main" = піаніно, "settings" = меню
-# Пояснення: Змінна, що визначає, який інтерфейс зараз відображається.
-settings_menu = None          # None = меню закрите
-# Пояснення: Об'єкт класу SettingsMenu. При "main" він None; при "settings" – об'єкт.
+screen_mode = "main"
+settings_menu = None
+random_toggle = None  # №3
+use_random_sounds = False # №3
 
-# =================== ЗМІНА 5: СЛАЙДЕР ГУЧНОСТІ ===================
-current_volume = 1.0          # 0.0=тихо ... 1.0=гучно
-# Пояснення: Глобальна змінна для зберігання поточної гучності.
-for s in sounds.values():     # Встановлюємо гучність ВСІМ звукам
+current_volume = 1.0
+for s in sounds.values():
     try:
         s.set_volume(current_volume)
     except Exception:
-        pass  # Захист від старих звуків
-# Пояснення: Застосовуємо початкову гучність (1.0) до кожного завантаженого звукового об'єкта.
+        pass
 
-# =================== ЗМІНА 6: СЛАЙДЕР КІЛЬКОСТІ КЛАВІШ ===================
-num_keys = len(KEYS)          # Початково ВСІ клавіші
-# Пояснення: Початкова кількість відображуваних клавіш.
-keys_list = list(KEYS.keys())[:num_keys]  # Обрізаємо список
-# Пояснення: Створюємо список назв клавіш, які АКТИВНІ для поточної кількості (наприклад, ['A', 'S', 'D', 'F', ...]).
-key_rects = create_key_rects(num_keys)    # Створюємо ТІЛЬКИ активні
-# Пояснення: Створюємо прямокутники Pygame лише для активних клавіш.
+num_keys = len(KEYS)
 
-# =================== ЗМІНА 7: ФУНКЦІЯ "ЗАСТОСУВАТИ" ===================
+keys_list = list(KEYS.keys())[:num_keys]
+key_rects = create_key_rects(num_keys)
+
+
+def _on_toggle_random(value: bool):
+    global use_random_sounds, generated_sounds
+    use_random_sounds = bool(value)
+
+    if use_random_sounds:
+        # 1) генеруємо рівно len(KEYS) звуків у GEN_DIR
+        paths = generate_random_bank(GEN_DIR, len(KEYS))
+        # 2) завантажуємо і розкладаємо по клавішах у порядку KEYS
+        generated_sounds = {}
+        for key_name, path in zip(KEYS.keys(), paths):
+            try:
+                snd = mixer.Sound(path)
+                snd.set_volume(current_volume)
+                generated_sounds[key_name] = snd
+            except Exception:
+                pass
+    else:
+        # повертаємось до твоєї мапи
+        generated_sounds = {}
+
+
 def apply_settings(volume: float, key_count: int):
-    # Пояснення: Функція, що викликається меню налаштувань для застосування змін гучності та кількості клавіш.
     global current_volume, num_keys, keys_list, key_rects, pressed_keys
-    
-    # Гучність: обмежуємо 0.0-1.0
     current_volume = float(max(0.0, min(1.0, volume)))
     for s in sounds.values():
         try:
             s.set_volume(current_volume)
         except Exception:
             pass
-    
-    # Клавіші: обмежуємо 1-max
+
+    for s in generated_sounds.values():
+        try:
+            s.set_volume(current_volume)
+        except Exception:
+            pass
+
     key_count = max(1, min(len(KEYS), int(key_count)))
     if key_count != num_keys:
         num_keys = key_count
-        keys_list = list(KEYS.keys())[:num_keys]      # Обрізаємо: Оновлюємо список АКТИВНИХ клавіш
-        key_rects = create_key_rects(num_keys)        # Нові прямокутники: Перебудовуємо візуальні області
-        # Очищаємо pressed_keys від індексів, які тепер не існують (якщо клавіш стало менше)
-        pressed_keys = {i for i in pressed_keys if i < num_keys} 
+        keys_list = list(KEYS.keys())[:num_keys]
+        key_rects = create_key_rects(num_keys)
+        pressed_keys = {i for i in pressed_keys if i < num_keys}
 
-# =================== ЗМІНА 8: КНОПКА "SETTINGS" ПРАЦЮЄ ===================
 def open_settings():
-    # Пояснення: Функція-обробник для кнопки "Settings", що відкриває меню.
-    global screen_mode, settings_menu
-    screen_mode = "settings"  # Переходимо в режим меню
+    global screen_mode, settings_menu, random_toggle
+    screen_mode = "settings"
     settings_menu = SettingsMenu(
-        screen.get_rect(),                # Прямокутник, що покриває весь екран
-        initial_volume=current_volume,    # Передаємо поточні налаштування
-        initial_keys=num_keys,            
-        min_keys=1, max_keys=len(KEYS),   # Обмеження слайдерів
-        on_change=apply_settings,         # Функція, що викликається при зміні значень слайдерів
-        on_back=lambda: _back_to_main(),  # Функція, що викликається при натисканні "Назад"
+        screen.get_rect(),
+        initial_volume=current_volume,
+        initial_keys=num_keys,
+        min_keys=1,
+        max_keys=len(KEYS),
+        on_change=apply_settings,
+        on_back=lambda: _back_to_main(),
     )
+    r = screen.get_rect()  # 3
+    random_toggle = ToggleSwitch(
+        x=r.x + 200, y=r.y + 290, width=100, height=36,
+        initial=use_random_sounds,
+        on_change=_on_toggle_random
+    )  # 3
 
-# =================== ЗМІНА 9: КНОПКА "НАЗАД" ===================
+
 def _back_to_main():
-    # Пояснення: Функція для повернення з меню налаштувань до основного екрана піаніно.
     global screen_mode, settings_menu
-    screen_mode = "main"      # Повертаємося до головного режиму
-    settings_menu = None      # Знищуємо (приховуємо) об'єкт меню
+    screen_mode = "main"
+    settings_menu = None
 
-def exit_game(): quit()  # Без змін
 
-# =================== ЗМІНА 10: ІКОНКИ ДЛЯ КНОПКИ ===================
-SETTINGS_IDLE = transform.scale(  # Звичайна шестерня
-    image.load('assets/images/buttons/settings_unhover.png'), (50, 50))
-SETTINGS_HOVER = transform.scale( # Блискуча шестерня
-    image.load('assets/images/buttons/settings_hover.png'), (50, 50))
-# Пояснення: Завантажуємо та масштабуємо зображення для кнопки налаштувань (звичайний та при наведенні).
+def _play_for_key_name(k: str):
+    if use_random_sounds and all_sounds_list:
+        choice(all_sounds_list).play()
+    else:
+        snd = sounds.get(k)
+        if snd:
+            snd.play()
 
-# =================== ЗМІНА 11: КНОПКА 50x50 З ІКОНКОЮ ===================
+def _play_for_index(i: int):
+    if 0 <= i < len(keys_list):
+        k = keys_list[i]
+        _play_for_key_name(k)
+
+
+def _play_for_key_name(k: str):
+    snd = None
+    if use_random_sounds:
+        snd = generated_sounds.get(k)
+    if snd is None:
+        snd = sounds.get(k)  # запасний варіант: твій оригінальний звук
+    if snd:
+        snd.play()
+
+
+def exit_game(): quit()
+
+SETTINGS_IDLE = transform.scale(
+    image.load('assets/images/buttons/settings_unhover.png'), (50, 50)
+)
+SETTINGS_HOVER = transform.scale(
+    image.load('assets/images/buttons/settings_hover.png'), (50, 50)
+)
+
 buttons = [
     Button(
-        60, 20, 50, 50,              # Координати та розмір (квадратна 50x50)
-        "",                          # Без тексту, оскільки використовуємо іконку
-        open_settings,               # Обробник події кліку
-        img_idle=SETTINGS_IDLE,      # Звичайна іконка
-        img_hover=SETTINGS_HOVER     # Іконка при наведенні
+        60, 20, 50, 50,
+        "",
+        open_settings,
+        img_idle=SETTINGS_IDLE,
+        img_hover=SETTINGS_HOVER
     )
 ]
-# Пояснення: Створюємо список кнопок (зараз лише одна - "Settings").
-
-# =================== ЗМІНА 12: ЕКРАН ПІСЛЯ РЕСУРСІВ ===================
-screen = display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT)) 
-# Пояснення: Створюємо об'єкт екрана. Це робиться після завантаження більшості ресурсів для оптимізації.
 
 running = True
 while running:
     screen.fill(WHITE)
-    
-    # =================== ЗМІНА 13: МЕНЮ ХОВАЄ ПІАНІНО ===================
     if screen_mode == "settings" and settings_menu:
-        settings_menu.draw(screen, my_font)  # Малюємо ТІЛЬКИ меню, покриваючи все
+        settings_menu.draw(screen, my_font)
+        if random_toggle:
+            random_toggle.draw(screen, my_font)
     else:
-        # Головний екран
         for button in buttons:
-            button.draw(screen, my_font) # Малюємо кнопку налаштувань
-        draw_keys(screen, key_rects, pressed_keys) # Малюємо клавіші піаніно та ефекти нот
+            button.draw(screen, my_font)
+        draw_keys(screen, key_rects, pressed_keys)
+
 
     display.flip()
-    # Пояснення: Оновлюємо екран, щоб відобразити всі зміни.
 
     for e in event.get():
         if e.type == QUIT:
             running = False
-
-        # =================== ЗМІНА 14: МЕНЮ БЛокує ПІАНІНО ===================
         if screen_mode == "settings" and settings_menu:
-            settings_menu.handle_event(e)  # Обробляємо події (кліки, рухи) ТІЛЬКИ для меню
-            continue  # Не обробляємо жодні події для піаніно (кнопки, клавіші)
-
-        # Головний екран
+            settings_menu.handle_event(e)
+            if random_toggle:
+                random_toggle.handle_event(e)
+            continue
         for button in buttons:
-            button.handle_event(e) # Обробляємо події для кнопки "Settings"
-        
-        # =================== ЗМІНА 15: КЛАВІАТУРА ТІЛЬКИ АКТИВНІ ===================
-        # Обробка натискання клавіш клавіатури
+            button.handle_event(e)
         if e.type == KEYDOWN:
-            k = key.name(e.key) # Отримуємо назву клавіші (наприклад, 'a', 's')
-            # Перевіряємо, чи клавіша є нотою І чи вона є в списку АКТИВНИХ клавіш
-            if k in sounds and k in keys_list:  # ДОДАНО: k in keys_list!
-                sounds[k].play()
+            k = key.name(e.key)
+            if k in sounds and k in keys_list:
+                _play_for_key_name(k)
                 idx = keys_list.index(k)
                 pressed_keys.add(idx)
 
-        # Обробка відпускання клавіш клавіатури
         if e.type == KEYUP:
             k = key.name(e.key)
-            # Перевіряємо, чи клавіша є нотою І чи вона є в списку АКТИВНИХ клавіш
-            if k in sounds and k in keys_list:  # ДОДАНО: k in keys_list!
+            if k in sounds and k in keys_list:
                 idx = keys_list.index(k)
                 if idx in pressed_keys:
                     pressed_keys.remove(idx)
 
-        # Обробка натискання миші по клавішах піаніно
         if e.type == MOUSEBUTTONDOWN:
             pos = e.pos
             for i, rect in enumerate(key_rects):
-                if rect.collidepoint(pos): # Якщо клік відбувся в області клавіші
-                    sounds[keys_list[i]].play() # Відтворюємо звук активної клавіші
+                if rect.collidepoint(pos):
+                    _play_for_index(i)
                     pressed_keys.add(i)
 
-        # Обробка відпускання миші
         if e.type == MOUSEBUTTONUP:
             pos = e.pos
             for i, rect in enumerate(key_rects):
-                # Перевірка на індекс потрібна, щоб зняти натиск лише з тих клавіш, що були натиснуті
                 if i in pressed_keys and rect.collidepoint(pos):
                     pressed_keys.remove(i)
